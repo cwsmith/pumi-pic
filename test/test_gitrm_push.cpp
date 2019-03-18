@@ -23,24 +23,25 @@
 #include "unit_tests.hpp"
 #include "pumipic_utils.hpp"
 #include "pumipic_push.hpp"
-
+#include "gitrm_diffusion.hpp" //TODO remove
 
 namespace o = Omega_h;
 namespace p = pumipic;
+namespace g = gitrm;
 
 #define PRINT_DETAIL 0
-int main(int argc, char** argv) 
+int main(int argc, char** argv)
 {
 
-  if(argc < 2) 
+  if(argc < 2)
   {
     std::cout << "Usage: ./push_and_search mesh [nsteps] \n"
               << "Example: ./push_and_search  cube.msh 100\n";
     exit(1);
   }
-   
+
   int nsteps = (argc>2)? atoi(argv[2]) : 100;
-  
+
   auto lib = Omega_h::Library(&argc, &argv);
   const auto world = lib.world();
   auto mesh = Omega_h::gmsh::read(argv[1], world);
@@ -49,16 +50,20 @@ int main(int argc, char** argv)
   // dual, up, down are Adj ~ Graph{arrays:LOs a2ab,ab2b}
   const auto dual = mesh.ask_dual();
   const auto down_r2f = mesh.ask_down(3, 2);
+  const auto down_f2e = mesh.ask_down(2,1);
+  const auto up_e2f = mesh.ask_up(1, 2);
+  const auto up_f2r = mesh.ask_up(2, 3);
   //coordinates
   const auto mesh2verts = mesh.ask_elem_verts();
   const auto coords = mesh.coords();
   const auto face_verts =  mesh.ask_verts_of(2);//LOs
   const auto side_is_exposed = mark_exposed_sides(&mesh);
 
+  const auto dim = mesh.dim();
   Omega_h::Int nelems = mesh.nelems();
 
 #if PRINT_DETAIL==1
-  test_unit(mesh);
+  test_unit(&lib);
   print_mesh_stat(mesh);
   //p::print_array(&data.data()->data()[0], 3, "data");
 #endif
@@ -97,7 +102,6 @@ int main(int argc, char** argv)
   Omega_h::Write<Omega_h::LO> elem_ids(np); //next element to search for
   Omega_h::Write<Omega_h::LO> coll_adj_face_ids(np, -1);
   Omega_h::Write<Omega_h::LO> hitWall(np,0);
-  Omega_h::Write<Omega_h::LO> pids(np,0);
 
   elem_ids[0] = 87;
   double xinit[] = {-1,-1,-1};
@@ -111,8 +115,6 @@ int main(int argc, char** argv)
   z[0] = zp[0];
   const double xref[] ={4.406160, 0.269205, 1};
 
-  pids[0] = 1;
-  
   //todo:load fields on mesh tags
   eFld0x[0]=2e-2;
   eFld0y[0]=1e-2;
@@ -120,6 +122,8 @@ int main(int argc, char** argv)
   bFld0r[0]=1;
   bFld0t[0]=0.2;
   bFld0z[0]=1;
+
+  Omega_h::LO gpSize=1; //per group, temporary
 
   Omega_h::Real dt = 5e-4;
 
@@ -145,8 +149,15 @@ int main(int argc, char** argv)
 #ifdef DEBUG
     std::cout << x0[0] << " " << y0[0] << " " <<  z0[0] << " => " << x[0] << " " << y[0] << " " <<  z[0] << "\n";
 #endif
+
+    g::diffusion(dt, bFld0r, bFld0t, bFld0z, x, y, z, xp, yp, zp);
+
+#ifdef DEBUG
+    std::cout <<  " diffusion => " << x[0] << " " << y[0] << " " <<  z[0] << "\n";
+#endif
+
     //search
-    p::search_mesh(pids, nelems, x0, y0, z0, x, y, z, dual, down_r2f, side_is_exposed,
+    p::search_mesh(gpSize, nelems, x0, y0, z0, x, y, z, dual, down_r2f, down_f2e, up_e2f, up_f2r, side_is_exposed,
        mesh2verts, coords, face_verts, part_flags, elem_ids, coll_adj_face_ids, bccs, xpoints, loops);
 
     if(!p::compare_array(xpoints.data(), xinit, 3, 1e-5))
@@ -163,15 +174,13 @@ int main(int argc, char** argv)
 #endif
   }
 
-  //TODO update this if Xpoint, or x,y,z changed. 
-  //Valid for the rectangular block mesh (cube.msh) and the orig(5,0.3,0.4)  
-  if(!(p::compare_array(xpoints.data(), xref, 3, 1e-5) )) {
-    fprintf(stderr, "collision point does not match\n");
+  //TODO update this if Xpoint, or x,y,z changed.
+  //Valid for the rectangular block mesh (cube.msh) and the orig(5,0.3,0.4)
+  if(!(p::compare_array(xpoints.data(), xref, 3, 1e-5) ))
     return 1; //Failed
-  }
 
   return 0;
 }
-
+//use gcc -Winline to check inlining
 
 
